@@ -1,4 +1,5 @@
-﻿pub mod java_service;
+pub mod auth_service;
+pub mod java_service;
 pub mod launch_service;
 pub mod memory_service;
 pub mod modrinth_service;

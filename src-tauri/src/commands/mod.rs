@@ -1,4 +1,5 @@
-﻿pub mod fs;
+pub mod auth;
+pub mod fs;
 pub mod java;
 pub mod launcher;
 pub mod memory;

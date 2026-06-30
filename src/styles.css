@@ -31,7 +31,9 @@ label { color: #43514c; display: grid; gap: 7px; font-size: 14px; font-weight: 7
 input, select { background: #fff; border: 1px solid #cbd8d0; border-radius: 8px; color: #1d2522; min-height: 40px; padding: 0 12px; }
 .checkbox-row { align-items: center; display: flex; gap: 10px; } .checkbox-row input { min-height: auto; }
 .search-bar { margin-bottom: 14px; } .search-bar input { flex: 1; }
-.log-panel pre { background: #17211e; border-radius: 8px; color: #dcefe3; min-height: 220px; overflow: auto; padding: 16px; }
+.auth-box { border: 1px solid #e0e7e2; border-radius: 8px; display: grid; gap: 10px; padding: 12px; }
+.auth-box strong, .auth-box span { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.auth-box span { color: #60706a; font-size: 13px; margin-top: 4px; }.log-panel pre { background: #17211e; border-radius: 8px; color: #dcefe3; min-height: 220px; overflow: auto; padding: 16px; }
 .mod-toolbar { align-items: center; display: flex; gap: 10px; }
 .mod-toolbar .search-bar { flex: 1; margin-bottom: 0; }
 .update-results { border: 1px solid #cddfce; border-radius: 8px; display: grid; gap: 0; margin-top: 16px; overflow: hidden; }

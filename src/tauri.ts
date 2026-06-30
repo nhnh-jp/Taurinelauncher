@@ -31,7 +31,22 @@ export interface CreateProfileInput {
   autoMemory: boolean;
 }
 
-export interface JavaDetection {
+
+export interface MicrosoftDeviceCode {
+  device_code: string;
+  user_code: string;
+  verification_uri: string;
+  expires_in: number;
+  interval: number;
+  message: string;
+}
+
+export interface MicrosoftTokenResult {
+  access_token: string;
+  refresh_token: string;
+  expires_in: number;
+  scope: string;
+}export interface JavaDetection {
   found: boolean;
   path: string;
   version: string;
@@ -97,7 +112,14 @@ export function calculateMemory(profilePath: string) {
   return invoke<MemoryPlan>("calculate_memory", { profilePath });
 }
 
-export function detectJava() {
+
+export function beginMicrosoftDeviceLogin() {
+  return invoke<MicrosoftDeviceCode>("begin_microsoft_device_login");
+}
+
+export function pollMicrosoftDeviceLogin(deviceCode: string) {
+  return invoke<MicrosoftTokenResult | null>("poll_microsoft_device_login", { deviceCode });
+}export function detectJava() {
   return invoke<JavaDetection>("detect_java");
 }
 
