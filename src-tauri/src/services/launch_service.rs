@@ -1,12 +1,13 @@
 use std::{
     collections::HashMap,
     fs,
-    io::Write,
+    io::{self, Write},
     path::{Path, PathBuf},
 };
 
 use reqwest::blocking::Client;
 use serde::Deserialize;
+use zip::ZipArchive;
 
 use crate::{
     models::launch_config::LaunchResult,
@@ -47,18 +48,36 @@ struct VersionDownloads {
 
 #[derive(Debug, Deserialize)]
 struct Library {
+    #[serde(default)]
     downloads: Option<LibraryDownloads>,
+    #[serde(default)]
+    natives: HashMap<String, String>,
+    #[serde(default)]
+    rules: Vec<LibraryRule>,
 }
 
 #[derive(Debug, Deserialize)]
 struct LibraryDownloads {
     artifact: Option<LibraryArtifact>,
+    #[serde(default)]
+    classifiers: HashMap<String, LibraryArtifact>,
 }
 
 #[derive(Debug, Deserialize)]
 struct LibraryArtifact {
     path: String,
     url: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct LibraryRule {
+    action: String,
+    os: Option<LibraryRuleOs>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LibraryRuleOs {
+    name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -97,9 +116,10 @@ pub fn launch_minecraft(profile_path: String) -> Result<LaunchResult, String> {
     let classpath = runtime_classpath(&runtime);
     Ok(LaunchResult {
         command_preview: format!(
-            "{} -Xmx{}M -cp {} {} --version {} --gameDir {} --assetsDir {} --assetIndex {}",
+            "{} -Xmx{}M -Djava.library.path={} -cp {} {} --version {} --gameDir {} --assetsDir {} --assetIndex {}",
             java.path,
             profile.launch.memory_max_mb,
+            runtime.natives_dir.to_string_lossy(),
             classpath,
             runtime.main_class,
             profile.minecraft_version,
@@ -124,6 +144,7 @@ pub fn stream_logs(_profile_path: String) -> Result<Vec<String>, String> {
 struct PreparedRuntime {
     client_jar: PathBuf,
     library_jars: Vec<PathBuf>,
+    natives_dir: PathBuf,
     assets_dir: PathBuf,
     asset_index_id: String,
     main_class: String,
@@ -134,12 +155,14 @@ fn prepare_minecraft_runtime(version: &str) -> Result<PreparedRuntime, String> {
     let minecraft_root = data_dir.join("runtime").join("minecraft");
     let version_root = minecraft_root.join("versions").join(version);
     let libraries_root = minecraft_root.join("libraries");
+    let natives_root = minecraft_root.join("natives").join(version);
     let assets_dir = minecraft_root.join("assets");
     let asset_indexes_dir = assets_dir.join("indexes");
     let asset_objects_dir = assets_dir.join("objects");
 
     fs::create_dir_all(&version_root).map_err(|error| error.to_string())?;
     fs::create_dir_all(&libraries_root).map_err(|error| error.to_string())?;
+    fs::create_dir_all(&natives_root).map_err(|error| error.to_string())?;
     fs::create_dir_all(&asset_indexes_dir).map_err(|error| error.to_string())?;
     fs::create_dir_all(&asset_objects_dir).map_err(|error| error.to_string())?;
 
@@ -171,6 +194,7 @@ fn prepare_minecraft_runtime(version: &str) -> Result<PreparedRuntime, String> {
     }
 
     let library_jars = prepare_libraries(&version_json, &libraries_root)?;
+    prepare_natives(&version_json, &libraries_root, &natives_root)?;
     let asset_index_id = prepare_asset_index(&version_json, &asset_indexes_dir)?;
     if !asset_index_id.is_empty() {
         let asset_index_path = asset_indexes_dir.join(format!("{}.json", asset_index_id));
@@ -180,6 +204,7 @@ fn prepare_minecraft_runtime(version: &str) -> Result<PreparedRuntime, String> {
     Ok(PreparedRuntime {
         client_jar,
         library_jars,
+        natives_dir: natives_root,
         assets_dir,
         asset_index_id,
         main_class: version_json.main_class,
@@ -191,7 +216,11 @@ fn prepare_libraries(
     libraries_root: &Path,
 ) -> Result<Vec<PathBuf>, String> {
     let mut jars = Vec::new();
-    for library in &version_json.libraries {
+    for library in version_json
+        .libraries
+        .iter()
+        .filter(|library| should_use_library(library))
+    {
         let Some(downloads) = &library.downloads else {
             continue;
         };
@@ -205,6 +234,34 @@ fn prepare_libraries(
         jars.push(target);
     }
     Ok(jars)
+}
+
+fn prepare_natives(
+    version_json: &VersionJson,
+    libraries_root: &Path,
+    natives_root: &Path,
+) -> Result<(), String> {
+    for library in version_json
+        .libraries
+        .iter()
+        .filter(|library| should_use_library(library))
+    {
+        let Some(classifier_name) = native_classifier(library) else {
+            continue;
+        };
+        let Some(downloads) = &library.downloads else {
+            continue;
+        };
+        let Some(artifact) = downloads.classifiers.get(&classifier_name) else {
+            continue;
+        };
+        let native_jar = libraries_root.join(path_from_manifest(&artifact.path)?);
+        if !native_jar.exists() {
+            download_file(&artifact.url, &native_jar)?;
+        }
+        extract_native_jar(&native_jar, natives_root)?;
+    }
+    Ok(())
 }
 
 fn prepare_asset_index(
@@ -249,6 +306,75 @@ fn runtime_classpath(runtime: &PreparedRuntime) -> String {
         .map(|path| path.to_string_lossy().to_string())
         .collect::<Vec<_>>()
         .join(separator)
+}
+
+fn native_classifier(library: &Library) -> Option<String> {
+    library
+        .natives
+        .get(current_os_name())
+        .map(|classifier| classifier.replace("${arch}", current_arch_bits()))
+}
+
+fn should_use_library(library: &Library) -> bool {
+    if library.rules.is_empty() {
+        return true;
+    }
+    let mut allowed = false;
+    for rule in &library.rules {
+        if rule_matches_current_os(rule) {
+            allowed = rule.action == "allow";
+        }
+    }
+    allowed
+}
+
+fn rule_matches_current_os(rule: &LibraryRule) -> bool {
+    match &rule.os {
+        Some(os) => os
+            .name
+            .as_deref()
+            .is_none_or(|name| name == current_os_name()),
+        None => true,
+    }
+}
+
+fn current_os_name() -> &'static str {
+    if cfg!(windows) {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "osx"
+    } else {
+        "linux"
+    }
+}
+
+fn current_arch_bits() -> &'static str {
+    if cfg!(target_pointer_width = "64") {
+        "64"
+    } else {
+        "32"
+    }
+}
+
+fn extract_native_jar(native_jar: &Path, natives_root: &Path) -> Result<(), String> {
+    let file = fs::File::open(native_jar).map_err(|error| error.to_string())?;
+    let mut archive = ZipArchive::new(file).map_err(|error| error.to_string())?;
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index).map_err(|error| error.to_string())?;
+        if entry.is_dir() || entry.name().starts_with("META-INF/") {
+            continue;
+        }
+        let Some(enclosed_path) = entry.enclosed_name() else {
+            continue;
+        };
+        let target = natives_root.join(enclosed_path);
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        let mut output = fs::File::create(&target).map_err(|error| error.to_string())?;
+        io::copy(&mut entry, &mut output).map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 fn path_from_manifest(path: &str) -> Result<PathBuf, String> {

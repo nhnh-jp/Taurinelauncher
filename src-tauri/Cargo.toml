@@ -17,3 +17,4 @@ tauri = { version = "2", features = [] }
 thiserror = "1"
 toml = "0.8"
 urlencoding = "2"
+zip = { version = "2", default-features = false, features = ["deflate"] }
