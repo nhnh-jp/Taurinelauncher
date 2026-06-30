@@ -1,14 +1,12 @@
-# Taurinelauncher
-rust製のlauncher
-# Taurine Launcher
+﻿# Taurine Launcher
 
-Taurine Launcher は、Tauri で作る軽量な Minecraft Java Edition 用ランチャーです。
+Taurine Launcher は、Minecraft Java Edition のMOD環境を「Minecraftバージョン / Loader / Profile」単位で分離して管理する軽量ランチャーです。
 
-目的は、MOD環境をわかりやすく分けて管理し、できるだけ軽く・速く Minecraft を起動できるようにすることです。
+重い統合ランチャーではなく、起動の速さ、壊れにくいファイル構成、手動復旧しやすい設計、サーバー参加用プロファイルの作りやすさを優先します。
 
 ## コンセプト
 
-Taurine Launcher は、Minecraft の環境を以下の単位で管理します。
+管理単位は必ず次の階層にします。
 
 ```txt
 Minecraftバージョン
@@ -16,96 +14,49 @@ Minecraftバージョン
       └ Profile
 ```
 
-例：
+例:
 
 ```txt
-1.21.1
-  └ fabric
-      ├ main
-      ├ fps
-      └ neha-server
-
-1.20.1
-  └ forge
-      └ modpack-test
+profiles/1.21.1/fabric/main/
+profiles/1.21.1/fabric/neha-server/
+profiles/1.20.1/forge/test/
 ```
 
-各プロファイルは、それぞれ独立した `mods`、`config`、`resourcepacks`、`shaderpacks`、起動設定を持ちます。
-
-これにより、違うバージョンや違うLoaderのMODが混ざる事故を防ぎます。
+1プロファイルを1つの game directory として扱い、`mods`、`disabled-mods`、`config`、`resourcepacks`、`shaderpacks`、`logs` をプロファイルごとに分離します。
 
 ## 主な機能
 
-予定している機能は以下です。
+- プロファイル作成
+- プロファイル一覧表示
+- Minecraftバージョン別管理
+- Loader別管理
+- profile.toml の保存 / 読み込み
+- プロファイルごとのMOD個別管理
+- Modrinth API検索とダウンロード
+- MODの有効化 / 無効化
+- 自動メモリ調整
+- Java検出
+- Minecraft起動処理の土台
+- 起動ログ表示
+- サーバー用プロファイル作成
 
-* 軽量なTauri製ランチャー
-* Minecraftプロファイル管理
-* Minecraftバージョン別管理
-* Fabric / Forge / NeoForge 対応
-* プロファイルごとのMOD個別管理
-* Modrinth APIを使ったMOD検索
-* ModrinthからのMODダウンロード
-* MODの有効化 / 無効化
-* MOD更新確認
-* 自動メモリ調整
-* Java検出
-* 起動ログ表示
-* サーバー用プロファイル作成機能
+Phase 1では、Tauri v2 + React + TypeScript の土台、基本ディレクトリ作成、プロファイル作成、一覧表示、`profile.toml` の保存 / 読み込み、自動メモリ計算を実装しています。
 
 ## 作らない機能
 
-初期版では以下の機能は作りません。
+初期版では以下は作りません。
 
-* VC機能
-* SNS機能
-* チャット機能
-* 独自MOD投稿サイト
-* 大規模なModpack管理機能
-* CurseForge完全互換
-
-Taurine Launcher は多機能すぎるランチャーではなく、軽くて管理しやすいランチャーを目指します。
-
-## サーバーランチャー機能
-
-サーバーランチャー機能では、特定のMinecraftサーバーに参加するための環境を簡単に作成できます。
-
-例：
-
-```txt
-neha-server
-  Minecraft: 1.21.1
-  Loader: Fabric
-  必須MOD:
-    - Sodium
-    - Iris
-    - Lithium
-```
-
-ユーザーはサーバーを選ぶだけで、必要なプロファイルが自動生成されます。
-
-予定している処理：
-
-```txt
-サーバーを選択
-  ↓
-サーバー設定を読み込み
-  ↓
-Minecraftバージョンを確認
-  ↓
-Loaderを確認
-  ↓
-必要MODを確認
-  ↓
-ModrinthからMODをダウンロード
-  ↓
-専用プロファイルを作成
-  ↓
-Minecraftを起動
-```
-
-サーバーごとにプロファイルを分けることで、別サーバーのMOD構成と混ざらないようにします。
+- VC機能
+- SNS機能
+- チャット機能
+- 独自MOD投稿サイト
+- CurseForge完全互換
+- 大規模Modpack管理
+- アカウント高度管理
 
 ## ファイル構成
+
+ランチャーデータはアプリの実行ディレクトリ直下の `taurine-data/` に作成します。
 
 ```txt
 taurine-data/
@@ -115,16 +66,6 @@ taurine-data/
     1.21.1/
       fabric/
         main/
-          profile.toml
-          index.json
-          mods/
-          disabled-mods/
-          config/
-          resourcepacks/
-          shaderpacks/
-          logs/
-
-        neha-server/
           profile.toml
           index.json
           mods/
@@ -151,12 +92,12 @@ taurine-data/
     launcher.log
 ```
 
-## プロファイル設定
+## プロファイル管理
 
-`profile.toml` の例です。
+`profile.toml` は次の形式です。
 
 ```toml
-name = "neha-server"
+name = "main"
 minecraft_version = "1.21.1"
 loader = "fabric"
 loader_version = "latest"
@@ -179,111 +120,57 @@ check_updates_on_start = true
 auto_install_dependencies = true
 
 [server]
-enabled = true
-name = "neha-server"
-address = "play.example.com"
+enabled = false
+name = ""
+address = ""
 port = 25565
 ```
 
-## サーバー設定
+MODは `index.json` で管理します。ただし、復旧しやすさを優先し、`index.json` だけに依存せず `mods/` と `disabled-mods/` の実ファイル状態も見ます。
 
-`servers/neha-server.toml` の例です。
+## サーバーランチャー機能
 
-```toml
-name = "neha-server"
-description = "neha鯖用の公式プロファイル"
-minecraft_version = "1.21.1"
-loader = "fabric"
-loader_version = "latest"
-address = "play.example.com"
-port = 25565
-
-[[mods]]
-name = "Sodium"
-source = "modrinth"
-project_id = "AANobbMI"
-required = true
-
-[[mods]]
-name = "Iris"
-source = "modrinth"
-project_id = "YL57xq9U"
-required = false
-```
-
-## MOD管理
-
-各プロファイルには `index.json` を置き、インストール済みMODを管理します。
-
-```json
-{
-  "schema_version": 1,
-  "mods": [
-    {
-      "name": "Sodium",
-      "project_id": "AANobbMI",
-      "version_id": "example",
-      "file_name": "sodium-fabric.jar",
-      "sha512": "example",
-      "enabled": true,
-      "source": "modrinth",
-      "minecraft_version": "1.21.1",
-      "loader": "fabric"
-    }
-  ]
-}
-```
-
-MODの有効化 / 無効化は、ファイル移動で行います。
-
-```txt
-mods/
-  sodium.jar
-
-disabled-mods/
-  old-mod.jar
-```
-
-`mods` にあるMODは有効、`disabled-mods` にあるMODは無効です。
+サーバー設定は `servers/` に TOML で置きます。Phase 3で、サーバー設定の読み込み、必須MOD確認、Modrinthからの導入、`profiles/{minecraft_version}/{loader}/{server_name}/` の生成を実装します。
 
 ## 自動メモリ調整
 
-搭載メモリとMOD数から、Minecraftに割り当てるメモリを自動で決めます。
-
-目安：
+搭載メモリとMOD数から Xmx を決定します。
 
 ```txt
-MOD数 0〜20     : 2048MB
-MOD数 21〜80    : 4096MB
-MOD数 81〜150   : 6144MB
-MOD数 151以上   : 8192MB
+MOD数 0〜20     -> 2048MB
+MOD数 21〜80    -> 4096MB
+MOD数 81〜150   -> 6144MB
+MOD数 151以上   -> 8192MB
 ```
 
-ただし、OS用のメモリは必ず残します。
-ユーザーが手動でメモリを指定した場合は、手動設定を優先します。
+ただしOS用に最低2GBを残します。ユーザーが手動指定した場合は手動設定を優先します。
 
 ## 開発環境
 
-必要なもの：
+- Rust
+- Node.js
+- npm
+- Tauri v2 prerequisites
 
-* Rust
-* Node.js
-* Tauri v2
-* npm / pnpm / yarn
-
-インストール：
+依存関係のインストール:
 
 ```bash
 npm install
 ```
 
-開発起動：
+## 起動方法
 
 ```bash
 npm run tauri dev
 ```
 
-ビルド：
+フロントエンドだけ確認する場合:
+
+```bash
+npm run dev
+```
+
+## ビルド方法
 
 ```bash
 npm run tauri build
@@ -293,47 +180,29 @@ npm run tauri build
 
 ### Phase 1
 
-* プロファイル作成
-* プロファイル一覧表示
-* ファイル構成の自動生成
-* `profile.toml` の保存 / 読み込み
-* 自動メモリ計算
+- Tauri v2 + React + TypeScriptの初期構成
+- README.md作成
+- 基本ディレクトリ作成
+- プロファイル作成
+- プロファイル一覧表示
+- profile.tomlの保存 / 読み込み
+- 自動メモリ計算
 
 ### Phase 2
 
-* Modrinth検索
-* MODダウンロード
-* `index.json` 作成
-* MOD有効化 / 無効化
+- Modrinth検索
+- MODダウンロード
+- index.json作成
+- MOD有効化 / 無効化
 
 ### Phase 3
 
-* Java検出
-* Minecraft起動
-* ログ表示
+- サーバー設定ファイル読み込み
+- サーバー用プロファイル作成
+- 必須MODの自動導入
 
 ### Phase 4
 
-* サーバー用プロファイル作成
-* サーバー設定ファイル読み込み
-* 必須MODの自動導入
-* サーバー別プロファイルの管理
-
-### Phase 5
-
-* MOD更新確認
-* 依存関係の自動導入
-* UI改善
-
-## 方針
-
-Taurine Launcher は、巨大な多機能ランチャーではなく、軽くて管理しやすいランチャーを目指します。
-
-重視すること：
-
-* 軽い
-* 起動が速い
-* MODが混ざらない
-* ファイル構成がわかりやすい
-* 壊れても手動で直しやすい
-* サーバー参加用の環境を簡単に作れる
+- Java検出
+- Minecraft起動処理
+- ログ表示
