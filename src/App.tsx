@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Boxes, FileText, Home, ListPlus, LucideIcon, Play, RefreshCw, Search, Server, Settings, Trash2 } from "lucide-react";
-import { calculateMemory, createProfile, disableMod, enableMod, listInstalledMods, listProfiles, MemoryPlan, ModInfo, ProfileSummary, removeMod } from "./tauri";
+import { calculateMemory, checkModUpdates, createProfile, disableMod, enableMod, getModrinthVersions, installMod, listInstalledMods, listProfiles, MemoryPlan, ModInfo, ModrinthSearchResult, ModUpdateResult, ProfileSummary, removeMod, searchModrinth } from "./tauri";
 
 type Page = "home" | "profiles" | "create" | "mods" | "servers" | "settings" | "logs";
 
@@ -93,7 +93,11 @@ function CreateProfilePage({ onCreated, setStatus }: { onCreated: () => Promise<
 
 function ModsPage({ profiles, selectedPath, onSelect }: { profiles: ProfileSummary[]; selectedPath: string; onSelect: (path: string) => void }) {
   const [mods, setMods] = useState<ModInfo[]>([]);
+  const [results, setResults] = useState<ModrinthSearchResult[]>([]);
+  const [updates, setUpdates] = useState<ModUpdateResult[]>([]);
+  const [query, setQuery] = useState("");
   const [busyFile, setBusyFile] = useState("");
+  const [busyProject, setBusyProject] = useState("");
   const [message, setMessage] = useState("");
   const selected = profiles.find((profile) => profile.path === selectedPath);
 
@@ -108,6 +112,54 @@ function ModsPage({ profiles, selectedPath, onSelect }: { profiles: ProfileSumma
       setMessage(`Loaded ${nextMods.length} mods`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function submitSearch(event: React.FormEvent) {
+    event.preventDefault();
+    if (!selected || !query.trim()) return;
+    setBusyProject("search");
+    try {
+      const nextResults = await searchModrinth(query, selected.minecraft_version, selected.loader);
+      setResults(nextResults);
+      setMessage(`Found ${nextResults.length} Modrinth projects`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusyProject("");
+    }
+  }
+
+  async function installLatest(result: ModrinthSearchResult) {
+    if (!selected) return;
+    setBusyProject(result.project_id);
+    try {
+      const versions = await getModrinthVersions(result.project_id, selected.minecraft_version, selected.loader);
+      const latest = versions[0];
+      if (!latest) {
+        setMessage("No compatible version was found for this profile");
+        return;
+      }
+      const installed = await installMod(selected.path, result.project_id, latest.version_id);
+      setMessage(`Installed ${installed.file_name}`);
+      await refreshMods();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusyProject("");
+    }
+  }
+  async function checkUpdates() {
+    if (!selected) return;
+    setBusyProject("updates");
+    try {
+      const nextUpdates = await checkModUpdates(selected.path);
+      setUpdates(nextUpdates);
+      setMessage(nextUpdates.length === 0 ? "All Modrinth mods are up to date" : `Found ${nextUpdates.length} mod updates`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusyProject("");
     }
   }
 
@@ -127,7 +179,7 @@ function ModsPage({ profiles, selectedPath, onSelect }: { profiles: ProfileSumma
     void refreshMods();
   }, [selectedPath]);
 
-  return <section className="panel"><div className="section-header"><h2>Mods</h2><select value={selectedPath} onChange={(event) => onSelect(event.target.value)}>{profiles.map((profile) => <option key={profile.path} value={profile.path}>{profile.minecraft_version}/{profile.loader}/{profile.name}</option>)}</select></div><div className="search-bar"><input placeholder="Modrinth search is next" disabled /><button className="secondary-button" disabled type="button"><Search size={17} />Search</button></div><p className="muted">{selected ? `Current mods: ${selected.mod_count}. Enabled ${selected.enabled_mod_count} / Disabled ${selected.disabled_mod_count}` : "Create a profile to manage mods."}</p><p className="muted">{message}</p><div className="mod-list">{mods.length === 0 ? <p className="empty-state">Put .jar files in mods/ or disabled-mods/ to show them here.</p> : mods.map((mod) => <div className="mod-row" key={mod.file_name}><div><strong>{mod.name}</strong><span>{mod.file_name}</span></div><span className={mod.enabled ? "state enabled" : "state disabled"}>{mod.enabled ? "Enabled" : "Disabled"}</span><button className="secondary-button" disabled={busyFile === mod.file_name} onClick={() => runModAction(mod.file_name, () => mod.enabled ? disableMod(selectedPath, mod.file_name) : enableMod(selectedPath, mod.file_name))} type="button">{mod.enabled ? "Disable" : "Enable"}</button><button className="icon-button" disabled={busyFile === mod.file_name} onClick={() => runModAction(mod.file_name, () => removeMod(selectedPath, mod.file_name))} title="Remove" type="button"><Trash2 size={16} /></button></div>)}</div></section>;
+  return <section className="panel"><div className="section-header"><h2>Mods</h2><select value={selectedPath} onChange={(event) => onSelect(event.target.value)}>{profiles.map((profile) => <option key={profile.path} value={profile.path}>{profile.minecraft_version}/{profile.loader}/{profile.name}</option>)}</select></div><div className="mod-toolbar"><form className="search-bar" onSubmit={submitSearch}><input placeholder="Search Modrinth" value={query} onChange={(event) => setQuery(event.target.value)} disabled={!selected || busyProject === "search"} /><button className="secondary-button" disabled={!selected || !query.trim() || busyProject === "search"} type="submit"><Search size={17} />Search</button></form><button className="secondary-button" disabled={!selected || busyProject === "updates"} onClick={checkUpdates} type="button"><RefreshCw size={17} />Check updates</button></div><p className="muted">{selected ? `Current mods: ${selected.mod_count}. Enabled ${selected.enabled_mod_count} / Disabled ${selected.disabled_mod_count}` : "Create a profile to manage mods."}</p><p className="muted">{message}</p>{updates.length > 0 && <div className="update-results">{updates.map((update) => <div className="update-row" key={update.file_name}><div><strong>{update.name}</strong><span>{update.file_name} to {update.latest_file_name}</span></div><span>{update.latest_version_number}</span></div>)}</div>}{results.length > 0 && <div className="search-results">{results.map((result) => <div className="result-row" key={result.project_id}>{result.icon_url ? <img alt="" src={result.icon_url} /> : <span className="result-icon">M</span>}<div><strong>{result.title}</strong><span>{result.description}</span></div><span className="downloads">{result.downloads.toLocaleString()} dl</span><button className="secondary-button" disabled={!selected || busyProject === result.project_id} onClick={() => installLatest(result)} type="button">Install</button></div>)}</div>}<div className="mod-list">{mods.length === 0 ? <p className="empty-state">Put .jar files in mods/ or disabled-mods/, or install from Modrinth search.</p> : mods.map((mod) => <div className="mod-row" key={mod.file_name}><div><strong>{mod.name}</strong><span>{mod.file_name}</span></div><span className={mod.enabled ? "state enabled" : "state disabled"}>{mod.enabled ? "Enabled" : "Disabled"}</span><button className="secondary-button" disabled={busyFile === mod.file_name} onClick={() => runModAction(mod.file_name, () => mod.enabled ? disableMod(selectedPath, mod.file_name) : enableMod(selectedPath, mod.file_name))} type="button">{mod.enabled ? "Disable" : "Enable"}</button><button className="icon-button" disabled={busyFile === mod.file_name} onClick={() => runModAction(mod.file_name, () => removeMod(selectedPath, mod.file_name))} title="Remove" type="button"><Trash2 size={16} /></button></div>)}</div></section>;
 }
 
 function ServersPage() { return <section className="panel"><h2>Server profiles</h2><p className="muted">servers/*.toml loading and required mod installation are planned for Phase 3.</p></section>; }

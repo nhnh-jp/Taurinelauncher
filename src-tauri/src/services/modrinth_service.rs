@@ -1,12 +1,196 @@
 use std::{
     fs,
+    io::Write,
     path::{Path, PathBuf},
 };
 
+use reqwest::blocking::Client;
+use serde::Deserialize;
+
 use crate::{
-    models::mod_info::{ModIndex, ModInfo},
+    commands::modrinth::{ModUpdateResult, ModrinthSearchResult, ModrinthVersionResult},
+    models::{
+        mod_info::{ModIndex, ModInfo},
+        profile::Profile,
+    },
     services::profile_service,
 };
+
+const API_BASE: &str = "https://api.modrinth.com/v2";
+const USER_AGENT: &str = "TaurineLauncher/0.1.0 (github.com/nhnh-jp/Taurinelauncher)";
+
+#[derive(Debug, Deserialize)]
+struct SearchResponse {
+    hits: Vec<SearchHit>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SearchHit {
+    project_id: String,
+    title: String,
+    description: String,
+    #[serde(default)]
+    icon_url: Option<String>,
+    #[serde(default)]
+    downloads: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct VersionResponse {
+    id: String,
+    name: String,
+    version_number: String,
+    project_id: String,
+    #[serde(default)]
+    game_versions: Vec<String>,
+    #[serde(default)]
+    loaders: Vec<String>,
+    files: Vec<VersionFile>,
+}
+
+#[derive(Debug, Deserialize)]
+struct VersionFile {
+    filename: String,
+    url: String,
+    #[serde(default)]
+    primary: bool,
+    #[serde(default)]
+    hashes: FileHashes,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct FileHashes {
+    #[serde(default)]
+    sha512: String,
+}
+
+pub fn search_modrinth(
+    query: String,
+    version: String,
+    loader: String,
+) -> Result<Vec<ModrinthSearchResult>, String> {
+    let query = query.trim();
+    if query.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let facets = serde_json::json!([
+        ["project_type:mod"],
+        [format!("versions:{}", version)],
+        [format!("categories:{}", loader)]
+    ]);
+    let url = format!(
+        "{}/search?query={}&limit=12&index=relevance&facets={}",
+        API_BASE,
+        urlencoding::encode(query),
+        urlencoding::encode(&facets.to_string())
+    );
+    let response: SearchResponse = client()?
+        .get(url)
+        .send()
+        .map_err(request_error)?
+        .error_for_status()
+        .map_err(request_error)?
+        .json()
+        .map_err(request_error)?;
+
+    Ok(response
+        .hits
+        .into_iter()
+        .map(|hit| ModrinthSearchResult {
+            project_id: hit.project_id,
+            title: hit.title,
+            description: hit.description,
+            icon_url: hit.icon_url.unwrap_or_default(),
+            downloads: hit.downloads,
+        })
+        .collect())
+}
+
+pub fn get_modrinth_versions(
+    project_id: String,
+    version: String,
+    loader: String,
+) -> Result<Vec<ModrinthVersionResult>, String> {
+    let versions = fetch_project_versions(&project_id)?;
+    Ok(versions
+        .into_iter()
+        .filter(|item| {
+            item.game_versions
+                .iter()
+                .any(|game_version| game_version == &version)
+        })
+        .filter(|item| {
+            item.loaders
+                .iter()
+                .any(|item_loader| item_loader == &loader)
+        })
+        .filter_map(|item| {
+            let file = primary_file(&item.files)?;
+            Some(ModrinthVersionResult {
+                version_id: item.id,
+                name: item.name,
+                version_number: item.version_number,
+                file_name: file.filename.clone(),
+                download_url: file.url.clone(),
+            })
+        })
+        .collect())
+}
+
+pub fn install_mod(
+    profile_path: String,
+    project_id: String,
+    version_id: String,
+) -> Result<ModInfo, String> {
+    let profile_dir = profile_service::resolve_profile_path(&profile_path)?;
+    let profile: Profile = profile_service::read_profile(profile_path)?;
+    let version = fetch_project_versions(&project_id)?
+        .into_iter()
+        .find(|item| item.id == version_id)
+        .ok_or_else(|| "selected Modrinth version was not found".to_string())?;
+    let file = primary_file(&version.files)
+        .ok_or_else(|| "selected Modrinth version has no downloadable jar file".to_string())?;
+    let file_name = ensure_safe_file_name(&file.filename)?;
+    let target = profile_dir.join("mods").join(&file_name);
+    if target.exists() || profile_dir.join("disabled-mods").join(&file_name).exists() {
+        return Err("a mod with the same file name already exists in this profile".to_string());
+    }
+
+    fs::create_dir_all(profile_dir.join("mods")).map_err(|error| error.to_string())?;
+    let bytes = client()?
+        .get(&file.url)
+        .send()
+        .map_err(request_error)?
+        .error_for_status()
+        .map_err(request_error)?
+        .bytes()
+        .map_err(request_error)?;
+    let mut output = fs::File::create(&target).map_err(|error| error.to_string())?;
+    output
+        .write_all(&bytes)
+        .map_err(|error| error.to_string())?;
+
+    let mut index = read_index(&profile_dir)?;
+    let mod_info = ModInfo {
+        name: version.name,
+        project_id: version.project_id,
+        version_id: version.id,
+        file_name,
+        sha512: file.hashes.sha512.clone(),
+        enabled: true,
+        source: "modrinth".to_string(),
+        minecraft_version: profile.minecraft_version,
+        loader: profile.loader,
+    };
+    index
+        .mods
+        .retain(|item| item.file_name != mod_info.file_name);
+    index.mods.push(mod_info.clone());
+    sync_index_with_files(&profile_dir, &mut index)?;
+    write_index(&profile_dir, &index)?;
+    Ok(mod_info)
+}
 
 pub fn list_installed_mods(profile_path: String) -> Result<Vec<ModInfo>, String> {
     let profile_dir = profile_service::resolve_profile_path(&profile_path)?;
@@ -38,12 +222,95 @@ pub fn disable_mod(profile_path: String, file_name: String) -> Result<(), String
     move_mod(profile_path, file_name, true)
 }
 
-pub fn check_mod_updates(profile_path: String) -> Result<Vec<String>, String> {
+pub fn check_mod_updates(profile_path: String) -> Result<Vec<ModUpdateResult>, String> {
     let profile_dir = profile_service::resolve_profile_path(&profile_path)?;
+    let profile: Profile = profile_service::read_profile(profile_path)?;
     let mut index = read_index(&profile_dir)?;
     sync_index_with_files(&profile_dir, &mut index)?;
     write_index(&profile_dir, &index)?;
-    Ok(vec![])
+
+    let mut updates = Vec::new();
+    for mod_info in index.mods.iter().filter(|item| item.source == "modrinth") {
+        if mod_info.project_id.is_empty() || mod_info.version_id.is_empty() {
+            continue;
+        }
+        let Some(latest) = latest_compatible_version(
+            &mod_info.project_id,
+            &profile.minecraft_version,
+            &profile.loader,
+        )?
+        else {
+            continue;
+        };
+        if latest.id == mod_info.version_id {
+            continue;
+        }
+        let Some(file) = primary_file(&latest.files) else {
+            continue;
+        };
+        updates.push(ModUpdateResult {
+            name: mod_info.name.clone(),
+            file_name: mod_info.file_name.clone(),
+            current_version_id: mod_info.version_id.clone(),
+            latest_version_id: latest.id,
+            latest_version_number: latest.version_number,
+            latest_file_name: file.filename.clone(),
+        });
+    }
+    Ok(updates)
+}
+
+fn latest_compatible_version(
+    project_id: &str,
+    minecraft_version: &str,
+    loader: &str,
+) -> Result<Option<VersionResponse>, String> {
+    Ok(fetch_project_versions(project_id)?
+        .into_iter()
+        .find(|item| {
+            item.game_versions
+                .iter()
+                .any(|game_version| game_version == minecraft_version)
+                && item.loaders.iter().any(|item_loader| item_loader == loader)
+                && primary_file(&item.files).is_some()
+        }))
+}
+fn fetch_project_versions(project_id: &str) -> Result<Vec<VersionResponse>, String> {
+    let url = format!(
+        "{}/project/{}/version",
+        API_BASE,
+        urlencoding::encode(project_id)
+    );
+    client()?
+        .get(url)
+        .send()
+        .map_err(request_error)?
+        .error_for_status()
+        .map_err(request_error)?
+        .json()
+        .map_err(request_error)
+}
+
+fn client() -> Result<Client, String> {
+    Client::builder()
+        .user_agent(USER_AGENT)
+        .build()
+        .map_err(request_error)
+}
+
+fn primary_file(files: &[VersionFile]) -> Option<&VersionFile> {
+    files
+        .iter()
+        .find(|file| file.primary && file.filename.to_ascii_lowercase().ends_with(".jar"))
+        .or_else(|| {
+            files
+                .iter()
+                .find(|file| file.filename.to_ascii_lowercase().ends_with(".jar"))
+        })
+}
+
+fn request_error(error: reqwest::Error) -> String {
+    error.to_string()
 }
 
 fn move_mod(profile_path: String, file_name: String, disable: bool) -> Result<(), String> {

@@ -31,6 +31,42 @@ export interface CreateProfileInput {
   autoMemory: boolean;
 }
 
+export interface ModInfo {
+  name: string;
+  project_id: string;
+  version_id: string;
+  file_name: string;
+  sha512: string;
+  enabled: boolean;
+  source: string;
+  minecraft_version: string;
+  loader: string;
+}
+
+export interface ModrinthSearchResult {
+  project_id: string;
+  title: string;
+  description: string;
+  icon_url: string;
+  downloads: number;
+}
+
+
+export interface ModUpdateResult {
+  name: string;
+  file_name: string;
+  current_version_id: string;
+  latest_version_id: string;
+  latest_version_number: string;
+  latest_file_name: string;
+}export interface ModrinthVersionResult {
+  version_id: string;
+  name: string;
+  version_number: string;
+  file_name: string;
+  download_url: string;
+}
+
 export function createProfile(input: CreateProfileInput) {
   return invoke<ProfileSummary>("create_profile", {
     version: input.version,
@@ -49,22 +85,26 @@ export function calculateMemory(profilePath: string) {
   return invoke<MemoryPlan>("calculate_memory", { profilePath });
 }
 
-export interface ModInfo {
-  name: string;
-  project_id: string;
-  version_id: string;
-  file_name: string;
-  sha512: string;
-  enabled: boolean;
-  source: string;
-  minecraft_version: string;
-  loader: string;
-}
 export function listInstalledMods(profilePath: string) {
   return invoke<ModInfo[]>("list_installed_mods", { profilePath });
 }
 
-export function enableMod(profilePath: string, fileName: string) {
+export function searchModrinth(query: string, version: string, loader: string) {
+  return invoke<ModrinthSearchResult[]>("search_modrinth", { query, version, loader });
+}
+
+export function getModrinthVersions(projectId: string, version: string, loader: string) {
+  return invoke<ModrinthVersionResult[]>("get_modrinth_versions", { projectId, version, loader });
+}
+
+export function installMod(profilePath: string, projectId: string, versionId: string) {
+  return invoke<ModInfo>("install_mod", { profilePath, projectId, versionId });
+}
+
+
+export function checkModUpdates(profilePath: string) {
+  return invoke<ModUpdateResult[]>("check_mod_updates", { profilePath });
+}export function enableMod(profilePath: string, fileName: string) {
   return invoke<void>("enable_mod", { profilePath, fileName });
 }
 
