@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     fs,
     io::Write,
     path::{Path, PathBuf},
@@ -14,6 +15,7 @@ use crate::{
 
 const VERSION_MANIFEST_URL: &str =
     "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
+const ASSET_OBJECT_BASE_URL: &str = "https://resources.download.minecraft.net";
 const USER_AGENT: &str = "TaurineLauncher/0.1.0 (github.com/nhnh-jp/Taurinelauncher)";
 
 #[derive(Debug, Deserialize)]
@@ -63,6 +65,16 @@ struct LibraryArtifact {
 struct AssetIndex {
     id: String,
     url: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct AssetObjects {
+    objects: HashMap<String, AssetObject>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AssetObject {
+    hash: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -124,10 +136,12 @@ fn prepare_minecraft_runtime(version: &str) -> Result<PreparedRuntime, String> {
     let libraries_root = minecraft_root.join("libraries");
     let assets_dir = minecraft_root.join("assets");
     let asset_indexes_dir = assets_dir.join("indexes");
+    let asset_objects_dir = assets_dir.join("objects");
 
     fs::create_dir_all(&version_root).map_err(|error| error.to_string())?;
     fs::create_dir_all(&libraries_root).map_err(|error| error.to_string())?;
     fs::create_dir_all(&asset_indexes_dir).map_err(|error| error.to_string())?;
+    fs::create_dir_all(&asset_objects_dir).map_err(|error| error.to_string())?;
 
     let version_json_path = version_root.join(format!("{}.json", version));
     let version_json_text = if version_json_path.exists() {
@@ -158,6 +172,10 @@ fn prepare_minecraft_runtime(version: &str) -> Result<PreparedRuntime, String> {
 
     let library_jars = prepare_libraries(&version_json, &libraries_root)?;
     let asset_index_id = prepare_asset_index(&version_json, &asset_indexes_dir)?;
+    if !asset_index_id.is_empty() {
+        let asset_index_path = asset_indexes_dir.join(format!("{}.json", asset_index_id));
+        prepare_asset_objects(&asset_index_path, &asset_objects_dir)?;
+    }
 
     Ok(PreparedRuntime {
         client_jar,
@@ -182,9 +200,6 @@ fn prepare_libraries(
         };
         let target = libraries_root.join(path_from_manifest(&artifact.path)?);
         if !target.exists() {
-            if let Some(parent) = target.parent() {
-                fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-            }
             download_file(&artifact.url, &target)?;
         }
         jars.push(target);
@@ -205,6 +220,24 @@ fn prepare_asset_index(
         fs::write(&target, text).map_err(|error| error.to_string())?;
     }
     Ok(asset_index.id.clone())
+}
+
+fn prepare_asset_objects(asset_index_path: &Path, asset_objects_dir: &Path) -> Result<(), String> {
+    let text = fs::read_to_string(asset_index_path).map_err(|error| error.to_string())?;
+    let index: AssetObjects = serde_json::from_str(&text).map_err(|error| error.to_string())?;
+    for object in index.objects.values() {
+        let prefix = object
+            .hash
+            .get(0..2)
+            .ok_or_else(|| "invalid asset hash in Minecraft asset index".to_string())?;
+        let target = asset_objects_dir.join(prefix).join(&object.hash);
+        if target.exists() {
+            continue;
+        }
+        let url = format!("{}/{}/{}", ASSET_OBJECT_BASE_URL, prefix, object.hash);
+        download_file(&url, &target)?;
+    }
+    Ok(())
 }
 
 fn runtime_classpath(runtime: &PreparedRuntime) -> String {
@@ -259,6 +292,9 @@ fn get_text(url: &str) -> Result<String, String> {
 }
 
 fn download_file(url: &str, target: &Path) -> Result<(), String> {
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
     let bytes = client()?
         .get(url)
         .send()
