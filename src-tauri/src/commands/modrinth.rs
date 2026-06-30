@@ -63,6 +63,14 @@ pub fn install_mod(
 }
 
 #[tauri::command]
+pub fn update_mod(
+    profile_path: String,
+    file_name: String,
+    version_id: String,
+) -> Result<ModInfo, String> {
+    modrinth_service::update_mod(profile_path, file_name, version_id)
+}
+#[tauri::command]
 pub fn remove_mod(profile_path: String, file_name: String) -> Result<(), String> {
     modrinth_service::remove_mod(profile_path, file_name)
 }

@@ -35,7 +35,7 @@ input, select { background: #fff; border: 1px solid #cbd8d0; border-radius: 8px;
 .mod-toolbar { align-items: center; display: flex; gap: 10px; }
 .mod-toolbar .search-bar { flex: 1; margin-bottom: 0; }
 .update-results { border: 1px solid #cddfce; border-radius: 8px; display: grid; gap: 0; margin-top: 16px; overflow: hidden; }
-.update-row { align-items: center; background: #f7fbf7; border-bottom: 1px solid #dce9dd; display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr) 130px; min-height: 54px; padding: 10px 12px; }
+.update-row { align-items: center; background: #f7fbf7; border-bottom: 1px solid #dce9dd; display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr) 130px auto; min-height: 54px; padding: 10px 12px; }
 .update-row:last-child { border-bottom: 0; }
 .update-row strong, .update-row span { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .update-row span { color: #60706a; font-size: 13px; margin-top: 2px; }.search-results { border: 1px solid #e0e7e2; border-radius: 8px; display: grid; gap: 0; margin-top: 16px; overflow: hidden; }

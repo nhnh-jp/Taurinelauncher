@@ -16,6 +16,7 @@ fn main() {
             commands::modrinth::search_modrinth,
             commands::modrinth::get_modrinth_versions,
             commands::modrinth::install_mod,
+            commands::modrinth::update_mod,
             commands::modrinth::remove_mod,
             commands::modrinth::enable_mod,
             commands::modrinth::disable_mod,

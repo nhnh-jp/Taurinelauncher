@@ -51,7 +51,6 @@ export interface ModrinthSearchResult {
   downloads: number;
 }
 
-
 export interface ModUpdateResult {
   name: string;
   file_name: string;
@@ -59,7 +58,9 @@ export interface ModUpdateResult {
   latest_version_id: string;
   latest_version_number: string;
   latest_file_name: string;
-}export interface ModrinthVersionResult {
+}
+
+export interface ModrinthVersionResult {
   version_id: string;
   name: string;
   version_number: string;
@@ -101,10 +102,15 @@ export function installMod(profilePath: string, projectId: string, versionId: st
   return invoke<ModInfo>("install_mod", { profilePath, projectId, versionId });
 }
 
-
 export function checkModUpdates(profilePath: string) {
   return invoke<ModUpdateResult[]>("check_mod_updates", { profilePath });
-}export function enableMod(profilePath: string, fileName: string) {
+}
+
+export function updateMod(profilePath: string, fileName: string, versionId: string) {
+  return invoke<ModInfo>("update_mod", { profilePath, fileName, versionId });
+}
+
+export function enableMod(profilePath: string, fileName: string) {
   return invoke<void>("enable_mod", { profilePath, fileName });
 }
 

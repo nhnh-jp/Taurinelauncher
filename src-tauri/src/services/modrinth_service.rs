@@ -158,18 +158,7 @@ pub fn install_mod(
     }
 
     fs::create_dir_all(profile_dir.join("mods")).map_err(|error| error.to_string())?;
-    let bytes = client()?
-        .get(&file.url)
-        .send()
-        .map_err(request_error)?
-        .error_for_status()
-        .map_err(request_error)?
-        .bytes()
-        .map_err(request_error)?;
-    let mut output = fs::File::create(&target).map_err(|error| error.to_string())?;
-    output
-        .write_all(&bytes)
-        .map_err(|error| error.to_string())?;
+    download_file(&file.url, &target)?;
 
     let mut index = read_index(&profile_dir)?;
     let mod_info = ModInfo {
@@ -192,6 +181,77 @@ pub fn install_mod(
     Ok(mod_info)
 }
 
+pub fn update_mod(
+    profile_path: String,
+    file_name: String,
+    version_id: String,
+) -> Result<ModInfo, String> {
+    let old_file_name = ensure_safe_file_name(&file_name)?;
+    let profile_dir = profile_service::resolve_profile_path(&profile_path)?;
+    let profile: Profile = profile_service::read_profile(profile_path)?;
+    let mut index = read_index(&profile_dir)?;
+    sync_index_with_files(&profile_dir, &mut index)?;
+
+    let existing = index
+        .mods
+        .iter()
+        .find(|item| item.file_name == old_file_name)
+        .cloned()
+        .ok_or_else(|| "target mod was not found in index.json".to_string())?;
+    if existing.source != "modrinth" || existing.project_id.is_empty() {
+        return Err("only Modrinth-managed mods can be updated".to_string());
+    }
+
+    let old_enabled_path = profile_dir.join("mods").join(&old_file_name);
+    let old_disabled_path = profile_dir.join("disabled-mods").join(&old_file_name);
+    let enabled = old_enabled_path.exists();
+    let old_path = if enabled {
+        old_enabled_path
+    } else if old_disabled_path.exists() {
+        old_disabled_path
+    } else {
+        return Err("target mod file was not found".to_string());
+    };
+
+    let version = fetch_project_versions(&existing.project_id)?
+        .into_iter()
+        .find(|item| item.id == version_id)
+        .ok_or_else(|| "selected Modrinth version was not found".to_string())?;
+    let file = primary_file(&version.files)
+        .ok_or_else(|| "selected Modrinth version has no downloadable jar file".to_string())?;
+    let new_file_name = ensure_safe_file_name(&file.filename)?;
+    let target_dir = if enabled { "mods" } else { "disabled-mods" };
+    let target_path = profile_dir.join(target_dir).join(&new_file_name);
+    if new_file_name != old_file_name && target_path.exists() {
+        return Err("a mod with the updated file name already exists in this profile".to_string());
+    }
+
+    fs::create_dir_all(profile_dir.join(target_dir)).map_err(|error| error.to_string())?;
+    let temp_path = profile_dir
+        .join(target_dir)
+        .join(format!(".download-{}", new_file_name));
+    remove_if_exists(temp_path.clone())?;
+    download_file(&file.url, &temp_path)?;
+    fs::remove_file(&old_path).map_err(|error| error.to_string())?;
+    fs::rename(&temp_path, &target_path).map_err(|error| error.to_string())?;
+
+    let updated = ModInfo {
+        name: version.name,
+        project_id: version.project_id,
+        version_id: version.id,
+        file_name: new_file_name,
+        sha512: file.hashes.sha512.clone(),
+        enabled,
+        source: "modrinth".to_string(),
+        minecraft_version: profile.minecraft_version,
+        loader: profile.loader,
+    };
+    index.mods.retain(|item| item.file_name != old_file_name);
+    index.mods.push(updated.clone());
+    sync_index_with_files(&profile_dir, &mut index)?;
+    write_index(&profile_dir, &index)?;
+    Ok(updated)
+}
 pub fn list_installed_mods(profile_path: String) -> Result<Vec<ModInfo>, String> {
     let profile_dir = profile_service::resolve_profile_path(&profile_path)?;
     let mut index = read_index(&profile_dir)?;
@@ -260,6 +320,18 @@ pub fn check_mod_updates(profile_path: String) -> Result<Vec<ModUpdateResult>, S
     Ok(updates)
 }
 
+fn download_file(url: &str, target: &Path) -> Result<(), String> {
+    let bytes = client()?
+        .get(url)
+        .send()
+        .map_err(request_error)?
+        .error_for_status()
+        .map_err(request_error)?
+        .bytes()
+        .map_err(request_error)?;
+    let mut output = fs::File::create(target).map_err(|error| error.to_string())?;
+    output.write_all(&bytes).map_err(|error| error.to_string())
+}
 fn latest_compatible_version(
     project_id: &str,
     minecraft_version: &str,
