@@ -10,7 +10,7 @@ use serde::Deserialize;
 use zip::ZipArchive;
 
 use crate::{
-    models::launch_config::LaunchResult,
+    models::{launch_config::LaunchResult, profile::Profile},
     services::{java_service, profile_service},
 };
 
@@ -18,6 +18,9 @@ const VERSION_MANIFEST_URL: &str =
     "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
 const ASSET_OBJECT_BASE_URL: &str = "https://resources.download.minecraft.net";
 const USER_AGENT: &str = "TaurineLauncher/0.1.0 (github.com/nhnh-jp/Taurinelauncher)";
+const DEV_USERNAME: &str = "Player";
+const DEV_UUID: &str = "00000000-0000-0000-0000-000000000000";
+const DEV_ACCESS_TOKEN: &str = "0";
 
 #[derive(Debug, Deserialize)]
 struct VersionManifest {
@@ -39,6 +42,35 @@ struct VersionJson {
     libraries: Vec<Library>,
     #[serde(rename = "assetIndex")]
     asset_index: Option<AssetIndex>,
+    #[serde(default, rename = "minecraftArguments")]
+    minecraft_arguments: Option<String>,
+    #[serde(default)]
+    arguments: Option<VersionArguments>,
+}
+
+#[derive(Debug, Deserialize)]
+struct VersionArguments {
+    #[serde(default)]
+    game: Vec<ArgumentEntry>,
+    #[serde(default)]
+    jvm: Vec<ArgumentEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum ArgumentEntry {
+    Plain(String),
+    Ruled {
+        rules: Vec<LibraryRule>,
+        value: ArgumentValue,
+    },
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum ArgumentValue {
+    One(String),
+    Many(Vec<String>),
 }
 
 #[derive(Debug, Deserialize)]
@@ -113,20 +145,9 @@ pub fn launch_minecraft(profile_path: String) -> Result<LaunchResult, String> {
 
     let profile_dir = profile_service::resolve_profile_path(&profile_path)?;
     let runtime = prepare_minecraft_runtime(&profile.minecraft_version)?;
-    let classpath = runtime_classpath(&runtime);
+    let command = build_launch_command(&java.path, &profile, &profile_dir, &runtime);
     Ok(LaunchResult {
-        command_preview: format!(
-            "{} -Xmx{}M -Djava.library.path={} -cp {} {} --version {} --gameDir {} --assetsDir {} --assetIndex {}",
-            java.path,
-            profile.launch.memory_max_mb,
-            runtime.natives_dir.to_string_lossy(),
-            classpath,
-            runtime.main_class,
-            profile.minecraft_version,
-            profile_dir.to_string_lossy(),
-            runtime.assets_dir.to_string_lossy(),
-            runtime.asset_index_id
-        ),
+        command_preview: command.join(" "),
         log_path: profile_dir
             .join("logs")
             .join("latest.log")
@@ -148,6 +169,8 @@ struct PreparedRuntime {
     assets_dir: PathBuf,
     asset_index_id: String,
     main_class: String,
+    game_args: Vec<String>,
+    jvm_args: Vec<String>,
 }
 
 fn prepare_minecraft_runtime(version: &str) -> Result<PreparedRuntime, String> {
@@ -200,6 +223,7 @@ fn prepare_minecraft_runtime(version: &str) -> Result<PreparedRuntime, String> {
         let asset_index_path = asset_indexes_dir.join(format!("{}.json", asset_index_id));
         prepare_asset_objects(&asset_index_path, &asset_objects_dir)?;
     }
+    let (game_args, jvm_args) = version_arguments(&version_json);
 
     Ok(PreparedRuntime {
         client_jar,
@@ -208,7 +232,103 @@ fn prepare_minecraft_runtime(version: &str) -> Result<PreparedRuntime, String> {
         assets_dir,
         asset_index_id,
         main_class: version_json.main_class,
+        game_args,
+        jvm_args,
     })
+}
+
+fn build_launch_command(
+    java_path: &str,
+    profile: &Profile,
+    profile_dir: &Path,
+    runtime: &PreparedRuntime,
+) -> Vec<String> {
+    let classpath = runtime_classpath(runtime);
+    let mut replacements = HashMap::new();
+    replacements.insert("auth_player_name", DEV_USERNAME.to_string());
+    replacements.insert("version_name", profile.minecraft_version.clone());
+    replacements.insert("game_directory", profile_dir.to_string_lossy().to_string());
+    replacements.insert(
+        "assets_root",
+        runtime.assets_dir.to_string_lossy().to_string(),
+    );
+    replacements.insert("assets_index_name", runtime.asset_index_id.clone());
+    replacements.insert("auth_uuid", DEV_UUID.to_string());
+    replacements.insert("auth_access_token", DEV_ACCESS_TOKEN.to_string());
+    replacements.insert("user_type", "legacy".to_string());
+    replacements.insert("version_type", "Taurine".to_string());
+    replacements.insert(
+        "natives_directory",
+        runtime.natives_dir.to_string_lossy().to_string(),
+    );
+    replacements.insert("launcher_name", "TaurineLauncher".to_string());
+    replacements.insert("launcher_version", "0.1.0".to_string());
+    replacements.insert("classpath", classpath);
+
+    let mut command = vec![java_path.to_string()];
+    command.push(format!("-Xms{}M", profile.launch.memory_min_mb));
+    command.push(format!("-Xmx{}M", profile.launch.memory_max_mb));
+    command.extend(profile.launch.extra_jvm_args.iter().cloned());
+    command.extend(resolve_arguments(&runtime.jvm_args, &replacements));
+    if runtime.jvm_args.is_empty() {
+        command.push(format!(
+            "-Djava.library.path={}",
+            runtime.natives_dir.to_string_lossy()
+        ));
+        command.push("-cp".to_string());
+        command.push(replacements["classpath"].clone());
+    }
+    command.push(runtime.main_class.clone());
+    command.extend(resolve_arguments(&runtime.game_args, &replacements));
+    command.extend(profile.launch.extra_game_args.iter().cloned());
+    command
+}
+
+fn version_arguments(version_json: &VersionJson) -> (Vec<String>, Vec<String>) {
+    if let Some(arguments) = &version_json.arguments {
+        return (
+            flatten_arguments(&arguments.game),
+            flatten_arguments(&arguments.jvm),
+        );
+    }
+    let game_args = version_json
+        .minecraft_arguments
+        .as_deref()
+        .unwrap_or_default()
+        .split_whitespace()
+        .map(ToString::to_string)
+        .collect();
+    (game_args, vec![])
+}
+
+fn flatten_arguments(entries: &[ArgumentEntry]) -> Vec<String> {
+    let mut values = Vec::new();
+    for entry in entries {
+        match entry {
+            ArgumentEntry::Plain(value) => values.push(value.clone()),
+            ArgumentEntry::Ruled { rules, value } => {
+                if rules.iter().any(rule_matches_current_os) {
+                    match value {
+                        ArgumentValue::One(item) => values.push(item.clone()),
+                        ArgumentValue::Many(items) => values.extend(items.iter().cloned()),
+                    }
+                }
+            }
+        }
+    }
+    values
+}
+
+fn resolve_arguments(args: &[String], replacements: &HashMap<&str, String>) -> Vec<String> {
+    args.iter()
+        .map(|arg| {
+            let mut resolved = arg.clone();
+            for (key, value) in replacements {
+                resolved = resolved.replace(&format!("${{{}}}", key), value);
+            }
+            resolved
+        })
+        .collect()
 }
 
 fn prepare_libraries(
