@@ -31,6 +31,16 @@ export interface CreateProfileInput {
   autoMemory: boolean;
 }
 
+export interface MicrosoftBrowserLogin {
+  state: string;
+  auth_url: string;
+  redirect_uri: string;
+}
+
+export interface MicrosoftAuthCodeResult {
+  code: string;
+  state: string;
+}
 
 export interface MicrosoftDeviceCode {
   device_code: string;
@@ -46,7 +56,9 @@ export interface MicrosoftTokenResult {
   refresh_token: string;
   expires_in: number;
   scope: string;
-}export interface JavaDetection {
+}
+
+export interface JavaDetection {
   found: boolean;
   path: string;
   version: string;
@@ -112,6 +124,13 @@ export function calculateMemory(profilePath: string) {
   return invoke<MemoryPlan>("calculate_memory", { profilePath });
 }
 
+export function beginMicrosoftBrowserLogin() {
+  return invoke<MicrosoftBrowserLogin>("begin_microsoft_browser_login");
+}
+
+export function pollMicrosoftBrowserLogin(state: string) {
+  return invoke<MicrosoftAuthCodeResult | null>("poll_microsoft_browser_login", { state });
+}
 
 export function beginMicrosoftDeviceLogin() {
   return invoke<MicrosoftDeviceCode>("begin_microsoft_device_login");
@@ -119,7 +138,9 @@ export function beginMicrosoftDeviceLogin() {
 
 export function pollMicrosoftDeviceLogin(deviceCode: string) {
   return invoke<MicrosoftTokenResult | null>("poll_microsoft_device_login", { deviceCode });
-}export function detectJava() {
+}
+
+export function detectJava() {
   return invoke<JavaDetection>("detect_java");
 }
 

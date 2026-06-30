@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Boxes, FileText, Home, ListPlus, LucideIcon, Play, RefreshCw, Search, Server, Settings, Trash2 } from "lucide-react";
-import { beginMicrosoftDeviceLogin, calculateMemory, checkModUpdates, createProfile, detectJava, disableMod, enableMod, getModrinthVersions, installMod, JavaDetection, launchMinecraft, listInstalledMods, listProfiles, MemoryPlan, MicrosoftDeviceCode, ModInfo, ModrinthSearchResult, ModUpdateResult, ProfileSummary, pollMicrosoftDeviceLogin, removeMod, searchModrinth, updateMod } from "./tauri";
+import { beginMicrosoftBrowserLogin, calculateMemory, checkModUpdates, createProfile, detectJava, disableMod, enableMod, getModrinthVersions, installMod, JavaDetection, launchMinecraft, listInstalledMods, listProfiles, MemoryPlan, MicrosoftBrowserLogin, ModInfo, ModrinthSearchResult, ModUpdateResult, ProfileSummary, pollMicrosoftBrowserLogin, removeMod, searchModrinth, updateMod } from "./tauri";
 
 type Page = "home" | "profiles" | "create" | "mods" | "servers" | "settings" | "logs";
 
@@ -212,7 +212,7 @@ function ModsPage({ profiles, selectedPath, onSelect }: { profiles: ProfileSumma
 function ServersPage() { return <section className="panel"><h2>Server profiles</h2><p className="muted">servers/*.toml loading and required mod installation are planned for Phase 3.</p></section>; }
 function SettingsPage() {
   const [java, setJava] = useState<JavaDetection | null>(null);
-  const [deviceCode, setDeviceCode] = useState<MicrosoftDeviceCode | null>(null);
+  const [browserLogin, setBrowserLogin] = useState<MicrosoftBrowserLogin | null>(null);
   const [message, setMessage] = useState("");
   async function runDetection() {
     try {
@@ -225,18 +225,18 @@ function SettingsPage() {
   }
   async function startMicrosoftLogin() {
     try {
-      const nextCode = await beginMicrosoftDeviceLogin();
-      setDeviceCode(nextCode);
-      setMessage(nextCode.message);
+      const login = await beginMicrosoftBrowserLogin();
+      setBrowserLogin(login);
+      setMessage("Browser opened. Complete Microsoft login, then return here.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
     }
   }
   async function checkMicrosoftLogin() {
-    if (!deviceCode) return;
+    if (!browserLogin) return;
     try {
-      const token = await pollMicrosoftDeviceLogin(deviceCode.device_code);
-      setMessage(token ? "Microsoft OAuth token received" : "Microsoft login is still pending");
+      const result = await pollMicrosoftBrowserLogin(browserLogin.state);
+      setMessage(result ? "Microsoft authorization code received" : "Microsoft login is still pending");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
     }
@@ -244,6 +244,6 @@ function SettingsPage() {
   useEffect(() => {
     void runDetection();
   }, []);
-  return <section className="panel settings-grid"><label>Java path<input value={java?.path || "not detected"} readOnly /></label><label>Java version<input value={java?.version || message || "checking"} readOnly /></label><button className="secondary-button" onClick={runDetection} type="button"><RefreshCw size={17} />Detect Java</button><div className="auth-box"><div><strong>Microsoft account</strong><span>{deviceCode ? `${deviceCode.verification_uri} / code ${deviceCode.user_code}` : "Device login requires TAURINE_MICROSOFT_CLIENT_ID"}</span></div><button className="secondary-button" onClick={startMicrosoftLogin} type="button">Microsoft Login</button><button className="secondary-button" disabled={!deviceCode} onClick={checkMicrosoftLogin} type="button">Check Login</button></div><p className="muted">{message}</p><label>Data directory<input value="taurine-data/" readOnly /></label><label>Theme<select defaultValue="system"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label></section>;
+  return <section className="panel settings-grid"><label>Java path<input value={java?.path || "not detected"} readOnly /></label><label>Java version<input value={java?.version || message || "checking"} readOnly /></label><button className="secondary-button" onClick={runDetection} type="button"><RefreshCw size={17} />Detect Java</button><div className="auth-box"><div><strong>Microsoft account</strong><span>{browserLogin ? `Waiting on ${browserLogin.redirect_uri}` : "Login opens your browser and returns to localhost"}</span></div><button className="secondary-button" onClick={startMicrosoftLogin} type="button">Microsoft Login</button><button className="secondary-button" disabled={!browserLogin} onClick={checkMicrosoftLogin} type="button">Check Login</button></div><p className="muted">{message}</p><label>Data directory<input value="taurine-data/" readOnly /></label><label>Theme<select defaultValue="system"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label></section>;
 }
 function LogsPage({ profile }: { profile?: ProfileSummary }) { const [memory, setMemory] = useState<MemoryPlan | null>(null); useEffect(() => { if (!profile) { setMemory(null); return; } void calculateMemory(profile.path).then(setMemory); }, [profile]); return <section className="panel log-panel"><h2>Logs</h2><pre>{profile ? `profile: ${profile.minecraft_version}/${profile.loader}/${profile.name}\nrecommended_memory: ${memory ? `${memory.recommended_mb}MB` : "calculating"}\nlauncher.log connection is planned for Phase 4.` : "No profile."}</pre></section>; }

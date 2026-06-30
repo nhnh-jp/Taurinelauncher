@@ -5,6 +5,8 @@ mod services;
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
+            commands::auth::begin_microsoft_browser_login,
+            commands::auth::poll_microsoft_browser_login,
             commands::auth::begin_microsoft_device_login,
             commands::auth::poll_microsoft_device_login,
             commands::profile::create_profile,
