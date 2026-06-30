@@ -31,6 +31,17 @@ export interface CreateProfileInput {
   autoMemory: boolean;
 }
 
+export interface JavaDetection {
+  found: boolean;
+  path: string;
+  version: string;
+}
+
+export interface LaunchResult {
+  command_preview: string;
+  log_path: string;
+}
+
 export interface ModInfo {
   name: string;
   project_id: string;
@@ -84,6 +95,14 @@ export function listProfiles() {
 
 export function calculateMemory(profilePath: string) {
   return invoke<MemoryPlan>("calculate_memory", { profilePath });
+}
+
+export function detectJava() {
+  return invoke<JavaDetection>("detect_java");
+}
+
+export function launchMinecraft(profilePath: string) {
+  return invoke<LaunchResult>("launch_minecraft", { profilePath });
 }
 
 export function listInstalledMods(profilePath: string) {

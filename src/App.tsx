@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Boxes, FileText, Home, ListPlus, LucideIcon, Play, RefreshCw, Search, Server, Settings, Trash2 } from "lucide-react";
-import { calculateMemory, checkModUpdates, createProfile, disableMod, enableMod, getModrinthVersions, installMod, listInstalledMods, listProfiles, MemoryPlan, ModInfo, ModrinthSearchResult, ModUpdateResult, ProfileSummary, removeMod, searchModrinth, updateMod } from "./tauri";
+import { calculateMemory, checkModUpdates, createProfile, detectJava, disableMod, enableMod, getModrinthVersions, installMod, JavaDetection, launchMinecraft, listInstalledMods, listProfiles, MemoryPlan, ModInfo, ModrinthSearchResult, ModUpdateResult, ProfileSummary, removeMod, searchModrinth, updateMod } from "./tauri";
 
 type Page = "home" | "profiles" | "create" | "mods" | "servers" | "settings" | "logs";
 
@@ -43,6 +43,18 @@ export function App() {
   useEffect(() => {
     void refreshProfiles();
   }, []);
+  async function launchSelectedProfile() {
+    if (!selectedProfile) {
+      setStatus("No profile selected");
+      return;
+    }
+    try {
+      const result = await launchMinecraft(selectedProfile.path);
+      setStatus(`Launch preview ready: ${result.command_preview}`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    }
+  }
 
   return (
     <div className="app-shell">
@@ -57,7 +69,7 @@ export function App() {
       </aside>
       <main className="main-area">
         <header className="topbar"><div><h1>{pageTitle(page)}</h1><p>{status}</p></div><button className="icon-button" onClick={refreshProfiles} disabled={loading} title="Refresh" type="button"><RefreshCw size={18} /></button></header>
-        {page === "home" && <HomePage profile={selectedProfile} onCreate={() => setPage("create")} />}
+        {page === "home" && <HomePage profile={selectedProfile} onCreate={() => setPage("create")} onLaunch={launchSelectedProfile} />}
         {page === "profiles" && <ProfilesPage profiles={profiles} selectedPath={selectedPath} onSelect={setSelectedPath} onCreate={() => setPage("create")} />}
         {page === "create" && <CreateProfilePage onCreated={refreshProfiles} setStatus={setStatus} />}
         {page === "mods" && <ModsPage profiles={profiles} selectedPath={selectedPath} onSelect={setSelectedPath} />}
@@ -73,8 +85,8 @@ function pageTitle(page: Page) {
   return { home: "Home", profiles: "Profiles", create: "Create Profile", mods: "Mods", servers: "Servers", settings: "Settings", logs: "Logs" }[page];
 }
 
-function HomePage({ profile, onCreate }: { profile?: ProfileSummary; onCreate: () => void }) {
-  return <section className="content-grid"><div className="panel primary-panel"><span className="eyebrow">Last Profile</span><h2>{profile ? profile.name : "No profile"}</h2><p>{profile ? `${profile.minecraft_version} / ${profile.loader} / ${profile.mod_count} mods` : "Create a profile to start."}</p><div className="actions"><button className="primary-button" type="button" disabled={!profile}><Play size={18} />Launch</button><button className="secondary-button" onClick={onCreate} type="button"><ListPlus size={18} />Create</button></div></div><div className="panel"><h3>Status</h3><dl className="status-list"><div><dt>Layout</dt><dd>Minecraft Version / Loader / Profile</dd></div><div><dt>Phase</dt><dd>2: local mod file management</dd></div></dl></div></section>;
+function HomePage({ profile, onCreate, onLaunch }: { profile?: ProfileSummary; onCreate: () => void; onLaunch: () => void }) {
+  return <section className="content-grid"><div className="panel primary-panel"><span className="eyebrow">Last Profile</span><h2>{profile ? profile.name : "No profile"}</h2><p>{profile ? `${profile.minecraft_version} / ${profile.loader} / ${profile.mod_count} mods` : "Create a profile to start."}</p><div className="actions"><button className="primary-button" type="button" disabled={!profile} onClick={onLaunch}><Play size={18} />Launch</button><button className="secondary-button" onClick={onCreate} type="button"><ListPlus size={18} />Create</button></div></div><div className="panel"><h3>Status</h3><dl className="status-list"><div><dt>Layout</dt><dd>Minecraft Version / Loader / Profile</dd></div><div><dt>Phase</dt><dd>2: local mod file management</dd></div></dl></div></section>;
 }
 
 function ProfilesPage({ profiles, selectedPath, onSelect, onCreate }: { profiles: ProfileSummary[]; selectedPath: string; onSelect: (path: string) => void; onCreate: () => void }) {
@@ -198,5 +210,21 @@ function ModsPage({ profiles, selectedPath, onSelect }: { profiles: ProfileSumma
 }
 
 function ServersPage() { return <section className="panel"><h2>Server profiles</h2><p className="muted">servers/*.toml loading and required mod installation are planned for Phase 3.</p></section>; }
-function SettingsPage() { return <section className="panel settings-grid"><label>Java path<input value="auto" readOnly /></label><label>Data directory<input value="taurine-data/" readOnly /></label><label>Theme<select defaultValue="system"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label></section>; }
+function SettingsPage() {
+  const [java, setJava] = useState<JavaDetection | null>(null);
+  const [message, setMessage] = useState("");
+  async function runDetection() {
+    try {
+      const detection = await detectJava();
+      setJava(detection);
+      setMessage(detection.found ? "Java detected" : "Java not found");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+  useEffect(() => {
+    void runDetection();
+  }, []);
+  return <section className="panel settings-grid"><label>Java path<input value={java?.path || "not detected"} readOnly /></label><label>Java version<input value={java?.version || message || "checking"} readOnly /></label><button className="secondary-button" onClick={runDetection} type="button"><RefreshCw size={17} />Detect Java</button><label>Data directory<input value="taurine-data/" readOnly /></label><label>Theme<select defaultValue="system"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label></section>;
+}
 function LogsPage({ profile }: { profile?: ProfileSummary }) { const [memory, setMemory] = useState<MemoryPlan | null>(null); useEffect(() => { if (!profile) { setMemory(null); return; } void calculateMemory(profile.path).then(setMemory); }, [profile]); return <section className="panel log-panel"><h2>Logs</h2><pre>{profile ? `profile: ${profile.minecraft_version}/${profile.loader}/${profile.name}\nrecommended_memory: ${memory ? `${memory.recommended_mb}MB` : "calculating"}\nlauncher.log connection is planned for Phase 4.` : "No profile."}</pre></section>; }
