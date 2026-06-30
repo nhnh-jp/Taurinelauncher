@@ -1,6 +1,6 @@
-﻿import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Boxes, FileText, Home, ListPlus, LucideIcon, Play, RefreshCw, Search, Server, Settings, Trash2 } from "lucide-react";
-import { calculateMemory, createProfile, listProfiles, MemoryPlan, ProfileSummary } from "./tauri";
+import { calculateMemory, createProfile, disableMod, enableMod, listInstalledMods, listProfiles, MemoryPlan, ModInfo, ProfileSummary, removeMod } from "./tauri";
 
 type Page = "home" | "profiles" | "create" | "mods" | "servers" | "settings" | "logs";
 
@@ -18,7 +18,7 @@ export function App() {
   const [page, setPage] = useState<Page>("home");
   const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
   const [selectedPath, setSelectedPath] = useState("");
-  const [status, setStatus] = useState("準備完了");
+  const [status, setStatus] = useState("Ready");
   const [loading, setLoading] = useState(false);
 
   const selectedProfile = useMemo(
@@ -32,7 +32,7 @@ export function App() {
       const nextProfiles = await listProfiles();
       setProfiles(nextProfiles);
       if (!selectedPath && nextProfiles[0]) setSelectedPath(nextProfiles[0].path);
-      setStatus(`${nextProfiles.length}件のプロファイルを読み込みました`);
+      setStatus(`Loaded ${nextProfiles.length} profiles`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error));
     } finally {
@@ -56,7 +56,7 @@ export function App() {
         </nav>
       </aside>
       <main className="main-area">
-        <header className="topbar"><div><h1>{pageTitle(page)}</h1><p>{status}</p></div><button className="icon-button" onClick={refreshProfiles} disabled={loading} title="更新" type="button"><RefreshCw size={18} /></button></header>
+        <header className="topbar"><div><h1>{pageTitle(page)}</h1><p>{status}</p></div><button className="icon-button" onClick={refreshProfiles} disabled={loading} title="Refresh" type="button"><RefreshCw size={18} /></button></header>
         {page === "home" && <HomePage profile={selectedProfile} onCreate={() => setPage("create")} />}
         {page === "profiles" && <ProfilesPage profiles={profiles} selectedPath={selectedPath} onSelect={setSelectedPath} onCreate={() => setPage("create")} />}
         {page === "create" && <CreateProfilePage onCreated={refreshProfiles} setStatus={setStatus} />}
@@ -74,11 +74,11 @@ function pageTitle(page: Page) {
 }
 
 function HomePage({ profile, onCreate }: { profile?: ProfileSummary; onCreate: () => void }) {
-  return <section className="content-grid"><div className="panel primary-panel"><span className="eyebrow">Last Profile</span><h2>{profile ? profile.name : "プロファイル未作成"}</h2><p>{profile ? `${profile.minecraft_version} / ${profile.loader} / MOD ${profile.mod_count}件` : "最初のプロファイルを作成してください。"}</p><div className="actions"><button className="primary-button" type="button" disabled={!profile}><Play size={18} />起動</button><button className="secondary-button" onClick={onCreate} type="button"><ListPlus size={18} />作成</button></div></div><div className="panel"><h3>状態</h3><dl className="status-list"><div><dt>管理単位</dt><dd>Minecraft Version / Loader / Profile</dd></div><div><dt>Phase</dt><dd>1: profile.toml と自動メモリ計算</dd></div></dl></div></section>;
+  return <section className="content-grid"><div className="panel primary-panel"><span className="eyebrow">Last Profile</span><h2>{profile ? profile.name : "No profile"}</h2><p>{profile ? `${profile.minecraft_version} / ${profile.loader} / ${profile.mod_count} mods` : "Create a profile to start."}</p><div className="actions"><button className="primary-button" type="button" disabled={!profile}><Play size={18} />Launch</button><button className="secondary-button" onClick={onCreate} type="button"><ListPlus size={18} />Create</button></div></div><div className="panel"><h3>Status</h3><dl className="status-list"><div><dt>Layout</dt><dd>Minecraft Version / Loader / Profile</dd></div><div><dt>Phase</dt><dd>2: local mod file management</dd></div></dl></div></section>;
 }
 
 function ProfilesPage({ profiles, selectedPath, onSelect, onCreate }: { profiles: ProfileSummary[]; selectedPath: string; onSelect: (path: string) => void; onCreate: () => void }) {
-  return <section className="panel"><div className="section-header"><h2>プロファイル一覧</h2><button className="secondary-button" onClick={onCreate} type="button"><ListPlus size={17} />新規作成</button></div><div className="table"><div className="table-row table-head"><span>名前</span><span>Version</span><span>Loader</span><span>MOD</span><span>Memory</span><span /></div>{profiles.map((profile) => <button className={profile.path === selectedPath ? "table-row selected" : "table-row"} key={profile.path} onClick={() => onSelect(profile.path)} type="button"><span>{profile.name}</span><span>{profile.minecraft_version}</span><span>{profile.loader}</span><span>{profile.enabled_mod_count}/{profile.mod_count}</span><span>{profile.auto_memory ? "Auto" : `${profile.memory_max_mb}MB`}</span><span className="row-actions"><Trash2 size={16} /></span></button>)}</div></section>;
+  return <section className="panel"><div className="section-header"><h2>Profiles</h2><button className="secondary-button" onClick={onCreate} type="button"><ListPlus size={17} />New</button></div><div className="table"><div className="table-row table-head"><span>Name</span><span>Version</span><span>Loader</span><span>Mods</span><span>Memory</span><span /></div>{profiles.map((profile) => <button className={profile.path === selectedPath ? "table-row selected" : "table-row"} key={profile.path} onClick={() => onSelect(profile.path)} type="button"><span>{profile.name}</span><span>{profile.minecraft_version}</span><span>{profile.loader}</span><span>{profile.enabled_mod_count}/{profile.mod_count}</span><span>{profile.auto_memory ? "Auto" : `${profile.memory_max_mb}MB`}</span><span className="row-actions"><Trash2 size={16} /></span></button>)}</div></section>;
 }
 
 function CreateProfilePage({ onCreated, setStatus }: { onCreated: () => Promise<void>; setStatus: (status: string) => void }) {
@@ -87,16 +87,49 @@ function CreateProfilePage({ onCreated, setStatus }: { onCreated: () => Promise<
   const [loader, setLoader] = useState("fabric");
   const [loaderVersion, setLoaderVersion] = useState("latest");
   const [autoMemory, setAutoMemory] = useState(true);
-  async function submit(event: React.FormEvent) { event.preventDefault(); try { const profile = await createProfile({ name, version, loader, loaderVersion, autoMemory }); setStatus(`${profile.name} を作成しました`); await onCreated(); } catch (error) { setStatus(error instanceof Error ? error.message : String(error)); } }
-  return <form className="panel form-panel" onSubmit={submit}><label>プロファイル名<input value={name} onChange={(event) => setName(event.target.value)} required /></label><label>Minecraftバージョン<input value={version} onChange={(event) => setVersion(event.target.value)} required /></label><label>Loader<select value={loader} onChange={(event) => setLoader(event.target.value)}><option value="fabric">Fabric</option><option value="forge">Forge</option><option value="neoforge">NeoForge</option><option value="quilt">Quilt</option><option value="vanilla">Vanilla</option></select></label><label>Loaderバージョン<input value={loaderVersion} onChange={(event) => setLoaderVersion(event.target.value)} /></label><label className="checkbox-row"><input checked={autoMemory} onChange={(event) => setAutoMemory(event.target.checked)} type="checkbox" />自動メモリ設定</label><button className="primary-button" type="submit"><ListPlus size={18} />作成</button></form>;
+  async function submit(event: React.FormEvent) { event.preventDefault(); try { const profile = await createProfile({ name, version, loader, loaderVersion, autoMemory }); setStatus(`Created ${profile.name}`); await onCreated(); } catch (error) { setStatus(error instanceof Error ? error.message : String(error)); } }
+  return <form className="panel form-panel" onSubmit={submit}><label>Profile name<input value={name} onChange={(event) => setName(event.target.value)} required /></label><label>Minecraft version<input value={version} onChange={(event) => setVersion(event.target.value)} required /></label><label>Loader<select value={loader} onChange={(event) => setLoader(event.target.value)}><option value="fabric">Fabric</option><option value="forge">Forge</option><option value="neoforge">NeoForge</option><option value="quilt">Quilt</option><option value="vanilla">Vanilla</option></select></label><label>Loader version<input value={loaderVersion} onChange={(event) => setLoaderVersion(event.target.value)} /></label><label className="checkbox-row"><input checked={autoMemory} onChange={(event) => setAutoMemory(event.target.checked)} type="checkbox" />Auto memory</label><button className="primary-button" type="submit"><ListPlus size={18} />Create</button></form>;
 }
 
 function ModsPage({ profiles, selectedPath, onSelect }: { profiles: ProfileSummary[]; selectedPath: string; onSelect: (path: string) => void }) {
+  const [mods, setMods] = useState<ModInfo[]>([]);
+  const [busyFile, setBusyFile] = useState("");
+  const [message, setMessage] = useState("");
   const selected = profiles.find((profile) => profile.path === selectedPath);
-  return <section className="panel"><div className="section-header"><h2>MOD管理</h2><select value={selectedPath} onChange={(event) => onSelect(event.target.value)}>{profiles.map((profile) => <option key={profile.path} value={profile.path}>{profile.minecraft_version}/{profile.loader}/{profile.name}</option>)}</select></div><div className="search-bar"><input placeholder="Modrinth検索はPhase 2で実装" disabled /><button className="secondary-button" disabled type="button"><Search size={17} />検索</button></div><p className="muted">{selected ? `現在のMOD数: ${selected.mod_count}件。有効 ${selected.enabled_mod_count}件 / 無効 ${selected.disabled_mod_count}件` : "プロファイルを作成するとMOD管理を開始できます。"}</p></section>;
+
+  async function refreshMods() {
+    if (!selectedPath) {
+      setMods([]);
+      return;
+    }
+    try {
+      const nextMods = await listInstalledMods(selectedPath);
+      setMods(nextMods);
+      setMessage(`Loaded ${nextMods.length} mods`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function runModAction(fileName: string, action: () => Promise<void>) {
+    setBusyFile(fileName);
+    try {
+      await action();
+      await refreshMods();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusyFile("");
+    }
+  }
+
+  useEffect(() => {
+    void refreshMods();
+  }, [selectedPath]);
+
+  return <section className="panel"><div className="section-header"><h2>Mods</h2><select value={selectedPath} onChange={(event) => onSelect(event.target.value)}>{profiles.map((profile) => <option key={profile.path} value={profile.path}>{profile.minecraft_version}/{profile.loader}/{profile.name}</option>)}</select></div><div className="search-bar"><input placeholder="Modrinth search is next" disabled /><button className="secondary-button" disabled type="button"><Search size={17} />Search</button></div><p className="muted">{selected ? `Current mods: ${selected.mod_count}. Enabled ${selected.enabled_mod_count} / Disabled ${selected.disabled_mod_count}` : "Create a profile to manage mods."}</p><p className="muted">{message}</p><div className="mod-list">{mods.length === 0 ? <p className="empty-state">Put .jar files in mods/ or disabled-mods/ to show them here.</p> : mods.map((mod) => <div className="mod-row" key={mod.file_name}><div><strong>{mod.name}</strong><span>{mod.file_name}</span></div><span className={mod.enabled ? "state enabled" : "state disabled"}>{mod.enabled ? "Enabled" : "Disabled"}</span><button className="secondary-button" disabled={busyFile === mod.file_name} onClick={() => runModAction(mod.file_name, () => mod.enabled ? disableMod(selectedPath, mod.file_name) : enableMod(selectedPath, mod.file_name))} type="button">{mod.enabled ? "Disable" : "Enable"}</button><button className="icon-button" disabled={busyFile === mod.file_name} onClick={() => runModAction(mod.file_name, () => removeMod(selectedPath, mod.file_name))} title="Remove" type="button"><Trash2 size={16} /></button></div>)}</div></section>;
 }
 
-function ServersPage() { return <section className="panel"><h2>サーバープロファイル</h2><p className="muted">servers/*.toml の読み込みと必須MOD導入はPhase 3で実装します。</p></section>; }
-function SettingsPage() { return <section className="panel settings-grid"><label>Javaパス<input value="auto" readOnly /></label><label>データ保存場所<input value="taurine-data/" readOnly /></label><label>テーマ<select defaultValue="system"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label></section>; }
-function LogsPage({ profile }: { profile?: ProfileSummary }) { const [memory, setMemory] = useState<MemoryPlan | null>(null); useEffect(() => { if (!profile) { setMemory(null); return; } void calculateMemory(profile.path).then(setMemory); }, [profile]); return <section className="panel log-panel"><h2>ログ</h2><pre>{profile ? `profile: ${profile.minecraft_version}/${profile.loader}/${profile.name}\nrecommended_memory: ${memory ? `${memory.recommended_mb}MB` : "calculating"}\nlauncher.log はPhase 4で接続します。` : "プロファイルがありません。"}</pre></section>; }
-
+function ServersPage() { return <section className="panel"><h2>Server profiles</h2><p className="muted">servers/*.toml loading and required mod installation are planned for Phase 3.</p></section>; }
+function SettingsPage() { return <section className="panel settings-grid"><label>Java path<input value="auto" readOnly /></label><label>Data directory<input value="taurine-data/" readOnly /></label><label>Theme<select defaultValue="system"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label></section>; }
+function LogsPage({ profile }: { profile?: ProfileSummary }) { const [memory, setMemory] = useState<MemoryPlan | null>(null); useEffect(() => { if (!profile) { setMemory(null); return; } void calculateMemory(profile.path).then(setMemory); }, [profile]); return <section className="panel log-panel"><h2>Logs</h2><pre>{profile ? `profile: ${profile.minecraft_version}/${profile.loader}/${profile.name}\nrecommended_memory: ${memory ? `${memory.recommended_mb}MB` : "calculating"}\nlauncher.log connection is planned for Phase 4.` : "No profile."}</pre></section>; }

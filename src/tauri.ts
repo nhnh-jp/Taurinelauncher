@@ -1,4 +1,4 @@
-﻿import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 
 export interface ProfileSummary {
   name: string;
@@ -47,4 +47,31 @@ export function listProfiles() {
 
 export function calculateMemory(profilePath: string) {
   return invoke<MemoryPlan>("calculate_memory", { profilePath });
+}
+
+export interface ModInfo {
+  name: string;
+  project_id: string;
+  version_id: string;
+  file_name: string;
+  sha512: string;
+  enabled: boolean;
+  source: string;
+  minecraft_version: string;
+  loader: string;
+}
+export function listInstalledMods(profilePath: string) {
+  return invoke<ModInfo[]>("list_installed_mods", { profilePath });
+}
+
+export function enableMod(profilePath: string, fileName: string) {
+  return invoke<void>("enable_mod", { profilePath, fileName });
+}
+
+export function disableMod(profilePath: string, fileName: string) {
+  return invoke<void>("disable_mod", { profilePath, fileName });
+}
+
+export function removeMod(profilePath: string, fileName: string) {
+  return invoke<void>("remove_mod", { profilePath, fileName });
 }

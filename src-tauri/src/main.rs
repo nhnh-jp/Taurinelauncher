@@ -1,4 +1,4 @@
-﻿mod commands;
+mod commands;
 mod models;
 mod services;
 
@@ -10,7 +10,9 @@ fn main() {
             commands::profile::read_profile,
             commands::profile::update_profile,
             commands::profile::delete_profile,
+            commands::fs::ensure_data_dirs,
             commands::memory::calculate_memory,
+            commands::modrinth::list_installed_mods,
             commands::modrinth::search_modrinth,
             commands::modrinth::get_modrinth_versions,
             commands::modrinth::install_mod,

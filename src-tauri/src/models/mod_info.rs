@@ -1,4 +1,4 @@
-﻿use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModIndex {
@@ -21,6 +21,9 @@ pub struct ModInfo {
 
 impl Default for ModIndex {
     fn default() -> Self {
-        Self { schema_version: 1, mods: vec![] }
+        Self {
+            schema_version: 1,
+            mods: vec![],
+        }
     }
 }

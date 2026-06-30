@@ -1,4 +1,4 @@
-﻿use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Profile {
@@ -59,16 +59,41 @@ pub struct ProfileSummary {
 }
 
 impl Profile {
-    pub fn new(name: String, minecraft_version: String, loader: String, loader_version: String, auto_memory: bool) -> Self {
+    pub fn new(
+        name: String,
+        minecraft_version: String,
+        loader: String,
+        loader_version: String,
+        auto_memory: bool,
+    ) -> Self {
         Self {
             name,
             minecraft_version,
             loader,
             loader_version,
-            launch: LaunchSettings { auto_memory, memory_min_mb: 512, memory_max_mb: 4096, java_path: "auto".to_string(), extra_jvm_args: vec![], extra_game_args: vec![] },
-            game: GameSettings { resolution_width: 1280, resolution_height: 720, fullscreen: false },
-            mods: ModSettings { check_updates_on_start: true, auto_install_dependencies: true },
-            server: ServerSettings { enabled: false, name: String::new(), address: String::new(), port: 25565 },
+            launch: LaunchSettings {
+                auto_memory,
+                memory_min_mb: 512,
+                memory_max_mb: 4096,
+                java_path: "auto".to_string(),
+                extra_jvm_args: vec![],
+                extra_game_args: vec![],
+            },
+            game: GameSettings {
+                resolution_width: 1280,
+                resolution_height: 720,
+                fullscreen: false,
+            },
+            mods: ModSettings {
+                check_updates_on_start: true,
+                auto_install_dependencies: true,
+            },
+            server: ServerSettings {
+                enabled: false,
+                name: String::new(),
+                address: String::new(),
+                port: 25565,
+            },
         }
     }
 }
